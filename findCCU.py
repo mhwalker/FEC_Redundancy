@@ -32,27 +32,47 @@ def makeRing(sequence,mode):
 		ring.setOutA(False)
 	return ring
 
-def testRedundancy(redundancy,adapterslotN,fecN,ringN):
+def compareCCUs(hasCCUs,foundCCUs):
+	#print hasCCUs,foundCCUs
+	if len(hasCCUs) != len(foundCCUs): return -3
+	for ccu in hasCCUs:
+		if ccu not in foundCCUs: return -4
+	return 0
+
+def testRedundancy(redundancy,adapterslotN,fecN,ringN,hasCCUs,nMissing):
 	lineRed = "ProgramTest.exe -adapterslot %d -fec %d -ring %d %s" % (adapterslotN,fecN,ringN,redundancy,)
 	lineReset = "ProgramTest.exe -adapterslot %d -fec %d -ring %d -reset" % (adapterslotN,fecN,ringN,)
 	lineScan = "ProgramTest.exe -adapterslot %d -fec %d -ring %d -scanCCU" % (adapterslotN,fecN,ringN,)
 	p = Popen(lineReset.split(),stdout=PIPE,stdin=PIPE,stderr=PIPE)
 	stdout_reset = p.communicate(input='')
 	nRed = 0
+	nRedGood = 0
 	while True:
+		if redundancy.strip() == "-redundancy  FEC-A-A": break
 		p = Popen(lineRed.split(),stdout=PIPE,stdin=PIPE,stderr=PIPE)
 		stdout_red = p.communicate(input='')
-		if "FEC SR0 = 0x5c80" in stdout_red[0] or "FEC SR0 = 0x4c90" in stdout_red[0]: break
+		if "FEC SR0 = 0x5c80" in stdout_red[0]:
+			nRedGood += 1
+			continue
+		if nRedGood > nMissing+2: break
 		if nRed > 10: return -1
 		nRed += 1
 	nScan = 0
+	foundCCUs = []
 	while True:
 		p = Popen(lineScan.split(),stdout=PIPE,stdin=PIPE,stderr=PIPE)
 		stdout_scan = p.communicate(input='')
 		if not "ERROR" in stdout_scan[1]:
+			splt = stdout_scan[0].split("CCU ")
+			for line in splt:
+				if "found" in line:
+					splt2 = line.split(" found")
+					if '0x7e' not in splt2[0]: foundCCUs.append(splt2[0])
 			break
 		nScan += 1
 		if nScan > 10: return -2
+	goodCCUlist = compareCCUs(hasCCUs,foundCCUs)
+	if goodCCUlist != 0: return goodCCUlist
 	p = Popen(lineReset.split(),stdout=PIPE,stdin=PIPE,stderr=PIPE)
 	stdout_reset = p.communicate(input='')
 	return 0
@@ -68,6 +88,13 @@ def checkRing(ring):
 	for i in range(0,len(ring.CCUs)-2):
 		if not ring.CCUs[i] and not ring.CCUs[i+1]: return False
 	return True
+
+def whichCCUs(ring,ccus):
+	hasCCUs = []
+	for ii,ccu in enumerate(ccus):
+		if ring.CCUs[ii]:
+			hasCCUs.append(ccu)
+	return hasCCUs
 
 def printRedundancyCommand(ccus,ring):
 	outputline = "-redundancy  FEC-"
@@ -111,10 +138,10 @@ def analyzeRing(ring,ccuAnalysis,test):
 def main():
 	#
 	#ccus = ["0x1","0x2","0x48","0x55","0x41","0xd","0x16","0x56"]
-	#ccus = ["0x1","0x2","0x60","0x5f","0x68","0x2d","0x1b"]
-	ccus = ["0x1","0x2","0x76","0xe","0x22"]
+	ccus = ["0x1","0x2","0x60","0x5f","0x68","0x2d","0x1b"]
+	#ccus = ["0x1","0x2","0x76","0xe","0x22"]
 	fecN=4
-	ringN=8
+	ringN=7
 	adapterN=1
 	#ccus = ["0x6f","0x5f","0x7b","0x3f"]
 
@@ -127,9 +154,10 @@ def main():
 		for j in range(0,4):
 			ring = makeRing(sequence,j)
 			if checkRing(ring):
+				hasCCUs = whichCCUs(ring,ccus)
 				redundancy = printRedundancyCommand(ccus,ring)
 				line = "ProgramTest.exe -adapterslot %d -fec %d -ring %d %s" % (adapterN,fecN,ringN,redundancy,)
-				test = testRedundancy(redundancy,adapterN,fecN,ringN)
+				test = testRedundancy(redundancy,adapterN,fecN,ringN,hasCCUs,len(ccus)-len(hasCCUs))
 				print test,line
 				if test != 0:
 					nBad += 1
